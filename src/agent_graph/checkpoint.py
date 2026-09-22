@@ -25,6 +25,24 @@ _RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _FIELDS = ("node", "run_id", "state", "step")
 
 
+def is_run_id(run_id: object) -> bool:
+    """Return whether ``run_id`` is an id every backend can key on as-is."""
+    return isinstance(run_id, str) and _RUN_ID.fullmatch(run_id) is not None
+
+
+def check_run_id(run_id: object) -> None:
+    """Raise ``ValueError`` unless ``run_id`` is an id every backend can key on.
+
+    The rule lives here, next to the pattern, so that :class:`Checkpoint`, the
+    backends, and callers that want to reject a bad id *before* doing work
+    (``Graph.invoke``) all enforce exactly one definition of it.
+    """
+    if not is_run_id(run_id):
+        raise ValueError(
+            f"run_id must match {_RUN_ID.pattern!r} so any backend can key on it, got {run_id!r}"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class Checkpoint:
     """The state of one run as it stood after ``node`` completed step ``step``.
@@ -44,11 +62,7 @@ class Checkpoint:
         # fullmatch, not match: `$` also matches before a trailing newline, so
         # `match` would accept "pr-42\n" (e.g. an id straight off readline())
         # and mint a second, near-invisible run directory beside "pr-42".
-        if not isinstance(self.run_id, str) or not _RUN_ID.fullmatch(self.run_id):
-            raise ValueError(
-                f"run_id must match {_RUN_ID.pattern!r} so any backend can key on it, "
-                f"got {self.run_id!r}"
-            )
+        check_run_id(self.run_id)
         if not isinstance(self.step, int) or isinstance(self.step, bool) or self.step < 0:
             raise ValueError(f"step must be a non-negative int, got {self.step!r}")
         if not isinstance(self.node, str) or not self.node:
@@ -175,7 +189,7 @@ class FileCheckpointer(Checkpointer):
     def _run_dir(self, run_id: str) -> Path | None:
         # An id Checkpoint would reject can never have been saved (and must
         # not be used as a path), so its run directory is treated as absent.
-        if not isinstance(run_id, str) or not _RUN_ID.fullmatch(run_id):
+        if not is_run_id(run_id):
             return None
         return self._root / run_id
 
